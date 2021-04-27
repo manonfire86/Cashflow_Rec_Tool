@@ -1,0 +1,339 @@
+
+import pandas as pd
+import numpy as np
+import os
+import datetime as dt
+import time
+import re
+
+### change your directory here
+
+os.chdir(r'') #insert path
+
+
+### change the file name for MB Financial here
+
+MB = pd.read_csv('') #filename of bank account
+mbdf= pd.DataFrame(MB)
+
+### change the Ondeck file here
+DailyTrans = pd.ExcelFile('') #filename of transaction data
+
+### This section parses the files and places them into formatted dataframes
+
+dfdt = pd.ExcelFile.parse(DailyTrans)
+dfdt = pd.DataFrame(dfdt)
+
+dfdt = dfdt.drop(dfdt[dfdt['State']=='P'].index)
+dfdt['Loan ID'] = dfdt['Loan ID'].astype(str)
+
+cdate = list(pd.to_datetime(dfdt['Clear Bank Date']))
+
+sdate = list(pd.to_datetime(dfdt['Sent Bank Date']))
+
+
+dfdt['Clear Date'] = cdate
+dfdt['Sent Date'] = sdate
+
+dfdt = dfdt.sort_values(by='Sent Date',ascending = True)
+
+
+
+KEY= dfdt['Loan ID']+dfdt['Description']
+
+splitforkey2 = dfdt['Clear Date'].astype(str).str.split('-')
+
+
+conckey2 = []        
+for i in splitforkey2.index:
+    conckey2.append(splitforkey2[i][0]+splitforkey2[i][1]+splitforkey2[i][2])
+conckey2df=pd.DataFrame(conckey2)
+
+
+
+
+splitforkey2final=conckey2df[0].astype(str).str.split(' ')
+conckey2final = []
+for i in range(len(splitforkey2final)):
+    conckey2final.append(splitforkey2final[i][0])
+KEY2 = dfdt['Loan ID'] +'_'+ conckey2final
+
+
+### Daily Transactions Data Frame completion    
+dfdt.insert(0,'KEY',KEY)
+dfdt.insert(1,'KEY2',KEY2)
+dfdt.insert(2,'Loan Payment Transaction',np.where(dfdt['Description']=='Loan Payment Transaction',dfdt['Transaction'],0))
+dfdt.insert(3,'Balance Rollover Transaction',np.where(dfdt['Description']=='Balance Rollover Transaction',dfdt['Transaction'],0))
+dfdt.insert(4,'Returned Payment Fee Transaction',np.where(dfdt['Clear Bank Date'].isnull(),None,np.where(dfdt['Description']=='Returned Payment Fee Transaction',dfdt['Transaction'],0)))
+dfdt.insert(5,'Late Fee Transaction',np.where(dfdt['Clear Bank Date'].isnull(),None,np.where(dfdt['Description']=='Late Fee Transaction',dfdt['Transaction'],0)))
+dfdt.insert(6,'Loan Payment Refund Transaction',np.where((dfdt['Description']=='Loan Payment Refund Transaction')|(dfdt['Description']=='Origination Fee Refund Transaction'),-dfdt['Transaction'],0))
+dfdt.insert(7,'Recovery Transaction',np.where(dfdt['Description']=='Recovery Transaction',dfdt['Transaction'],0))
+dfdt.insert(8,'Write Off Transaction',np.where(dfdt['Description']=='Write Off Transaction',dfdt['Transaction'],0))
+dfdt.insert(9,'Interest Cancellation Transaction',np.where(dfdt['Description']=='Interest Cancellation Transaction',dfdt['Transaction'],0))
+dfdt.insert(10,'Amortized',np.where((dfdt['Description']=='Recovery Transaction') | (dfdt['Description']=='Collection Agency Recovery'),0,np.where((dfdt['Description']=='Loan Payment Transaction')&(dfdt['Outstanding Principal']<=1),1,0)))
+dfdt.insert(11,'Sent Amt',np.where(dfdt['Clear Bank Date']=="","",dfdt['Loan Payment Transaction']+dfdt['Balance Rollover Transaction']+dfdt['Returned Payment Fee Transaction'].astype(float)+dfdt['Late Fee Transaction'].astype(float)+dfdt['Loan Payment Refund Transaction']+dfdt['Recovery Transaction']+np.where(dfdt['Description']=='Fee Refund Transaction',-dfdt['Transaction'],0)))
+dfdt.insert(12,'Error Pmt',np.where((dfdt['State']=='E') & ((dfdt['Description']=='Loan Payment Transaction')|(dfdt['Description']=='Recovery Transaction')),dfdt['Sent Amt'],0))
+dfdt.insert(13,'Error Fee',np.where((dfdt['State']=='E')& ((dfdt['Description']=='Returned Payment Fee Transaction') | (dfdt['Description']=='Late Fee Transaction')),dfdt['Sent Amt'],0))
+dfdt.insert(12,'Total Errors',dfdt['Error Pmt'].astype(float)+dfdt['Error Fee'].astype(float))
+dfdt.insert(2,'KEY3',dfdt['Loan ID']+dfdt['Amortized'].astype(str))
+dfdt.insert(16,'Received Pmt',np.where(dfdt['Description']=='Interest Cancellation Transaction',0,np.where(dfdt['Description']=='Loan Payment Refund Transaction',np.where((dfdt['Principal Amount'].notnull()) & (dfdt['State']=='C'),-dfdt['Transaction'],0),np.where(((dfdt['Description']!='Write Off Transaction') & ((dfdt['Principal Amount'].notnull()) & (dfdt['State']=='C'))),dfdt['Transaction'],0))))
+
+
+dfdt['Sent Amt'] = dfdt['Sent Amt'].astype(float)
+
+
+
+### MB Financial
+
+mbdf.insert(0,'Analysis Charge',np.where(mbdf['Reference Text'].str.contains('Analysis Charge'),1,0))
+mbdf.insert(1,'DB CTAS;DEUTSCHE BANK - CTAS;/',np.where((mbdf['Reference Text'].str.contains('DEUTSCHE')),1,0))
+mbdf.insert(2,'CITIGROUP GLOBAL MARKETS INC.;',np.where(mbdf['Reference Text'].str.contains('CITIGROUP GLOBAL MARKETS INC.'),1,0))
+mbdf.insert(3,'WEB XFER TO DDA 001830046930',np.where(mbdf['Reference Text'].str.contains('WEB XFER TO DDA 001830046930')|mbdf['Reference Text'].str.contains('WEB XFER TO DDA 001370049247')|mbdf['Reference Text'].str.contains('WEB XFER TO DDA 001370009415')|mbdf['Reference Text'].str.contains('WEB XFER TO DDA 001370054852')|mbdf['Reference Text'].str.contains('WEB XFER TO DDA 001370053651')|mbdf['Reference Text'].str.contains('WEB XFER TO DDA 001370054844')|mbdf['Reference Text'].str.contains('WEB XFER TO DDA 001370058475'),1,0))
+mbdf.insert(4,'1830006548;ON DECK CAPITAL INC',np.where((mbdf['Reference Text'].str.contains('1830006548;ON DECK CAPITAL INC')|mbdf['Reference Text'].str.contains('ON DECK CAPITAL  Tolis,Tolis/Tolis')|mbdf['Reference Text'].str.contains('Tolis Advisors/Tolis Advisors LP')|mbdf['Reference Text'].str.contains('Tolis Advi,Tolis Advisors/Tolis Advisors')|mbdf['Reference Text'].str.contains('ON DECK CAPITAL  OnDeck,OnDeck Capital/Tolis Advisors')),1,0))
+mbdf.insert(5,'081000210;CACH LLC OPERATING A',np.where((mbdf['Reference Text'].str.contains('081000210')|mbdf['Reference Text'].str.contains('071006486')|mbdf['Reference Text'].str.contains('121000248')|mbdf['Reference Text'].str.contains('NYLTD FUNDS CONTROL')),1,0))
+mbdf.insert(6,'021000089;TOLIS INVESTMENT STR,ATEGIES MASTER',np.where(mbdf['Reference Text'].str.contains('021000089'),1,0))
+mbdf.insert(7,'WEB XFER FR DDA 001370049247',np.where((mbdf['Reference Text'].str.contains('WEB XFER FR DDA 001370049247'))|(mbdf['Reference Text'].str.contains('WEB XFER FR DDA 001370009415')),1,0))
+
+
+### Pivots and joins
+
+
+##Daily Transactions Pivot
+
+cleardatesdt = sorted(list(set(dfdt['Clear Date'])))
+cleardatefinal = []
+for i in cleardatesdt:
+    cleardatefinal.append(i.replace(hour=0,minute=0,second=0))
+    
+sentdatesdt = sorted(list(set(dfdt['Sent Date'])))
+
+def sentcalc(x):
+    tempsdf = dfdt[dfdt['Sent Date']==x]
+    tempsentamt = np.sum(tempsdf['Sent Amt'].astype(float))
+    return tempsentamt
+
+def clearcalcerroramt(x):
+    tempbdf = dfdt[dfdt['Clear Date']==x]
+    temperroramt = np.sum(tempbdf['Error Pmt'].astype(float))
+    return temperroramt
+    
+def clearcalcerrorpmt(x):
+    tempbdfee = dfdt[dfdt['Clear Date']==x]
+    tempfeeamt = np.sum(tempbdfee['Error Fee'].astype(float))
+    return tempfeeamt
+
+
+
+sentpmtcol = []
+for i in sentdatesdt:
+    sentpmtcol.append(sentcalc(i))
+
+clearerroramtcol = []
+for i in cleardatesdt:
+    clearerroramtcol.append(clearcalcerroramt(i))
+    
+clearcalcerrorpmtcol = []
+for i in cleardatesdt:
+    clearcalcerrorpmtcol.append(clearcalcerrorpmt(i))
+
+calcdfdt = pd.DataFrame([sentpmtcol]).T
+calcdfdt.columns = ['Sent PMT']
+calcdfdt = calcdfdt.fillna(0)
+pivcalctab = pd.pivot_table(calcdfdt,index = pd.DatetimeIndex(sentdatesdt).normalize(),aggfunc=np.sum)
+calcerrordf = pd.DataFrame([clearerroramtcol,clearcalcerrorpmtcol]).T
+calcerrordf.columns = ['Error Pmt','Error Fee']
+calcerrordf = calcerrordf.fillna(0)
+errorpivcalctab = pd.pivot_table(calcerrordf,index =pd.DatetimeIndex(cleardatesdt).normalize(),aggfunc=np.sum)
+
+finalrecdf = pivcalctab.merge(errorpivcalctab,left_index=True,right_index=True)
+finalrecdf['Ondeck Rec'] = finalrecdf['Sent PMT']-finalrecdf['Error Fee']-finalrecdf['Error Pmt']
+
+
+## mbdf pivot
+
+mbdf['Rec Date'] = pd.to_datetime(mbdf['Ledger Date'])
+
+def debitcalc(x):
+    tempdebit = mbdf[mbdf['Debit / Credit Indicator'] =='D']
+    tempdebit = tempdebit[tempdebit['Rec Date'] == x]
+    tempdebit = np.sum(tempdebit['Amount'].astype(float))
+    return tempdebit
+
+def creditcalc(x):
+    tempcredit = mbdf[mbdf['Debit / Credit Indicator'] =='C']
+    tempcredit = tempcredit[tempcredit['Rec Date'] == x]
+    tempcredit = np.sum(tempcredit['Amount'].astype(float))
+    return tempcredit
+
+def tranmf(x):
+    temptranmf = mbdf[mbdf['CITIGROUP GLOBAL MARKETS INC.;']==1]
+    temptranmf = temptranmf[temptranmf['Rec Date'] == x]
+    temptranmf = np.sum(temptranmf['Amount'].astype(float))
+    return temptranmf
+
+def dbtrustee(x):
+    dbtrusteedf = mbdf[mbdf['DB CTAS;DEUTSCHE BANK - CTAS;/']==1]
+    dbtrusteedf = dbtrusteedf[dbtrusteedf['Rec Date'] == x]
+    dbtrusteedf = np.sum(dbtrusteedf['Amount'].astype(float))
+    return dbtrusteedf
+
+def mbanaly(x):
+    mbanalydf = mbdf[mbdf['Analysis Charge']==1]
+    mbanalydf = mbanalydf[mbanalydf['Rec Date'] == x]
+    mbanalydf = np.sum(mbanalydf['Amount'].astype(float))
+    return mbanalydf
+
+def mbtransfer(x):
+    mbtransdf = mbdf[mbdf['WEB XFER TO DDA 001830046930']==1]
+    mbtransdf = mbtransdf[mbtransdf['Rec Date'] == x]
+    mbtransdf = np.sum(mbtransdf['Amount'].astype(float))
+    return mbtransdf
+
+def servicing(x):
+    servicedf = mbdf[mbdf['1830006548;ON DECK CAPITAL INC']==1]
+    servicedf = servicedf[servicedf['Rec Date'] == x]
+    servicedf = np.sum(servicedf['Amount'].astype(float))
+    return servicedf
+
+def writeoffrec(x):
+    writeoffrecdf= mbdf[mbdf['081000210;CACH LLC OPERATING A']==1]
+    writeoffrecdf= writeoffrecdf[writeoffrecdf['Rec Date'] == x]
+    writeoffrecdf= np.sum(writeoffrecdf['Amount'].astype(float))
+    return writeoffrecdf
+
+def sblpurch(x):
+    sblrec= mbdf[mbdf['021000089;TOLIS INVESTMENT STR,ATEGIES MASTER']==1]
+    sblrec= sblrec[sblrec['Rec Date'] == x]
+    sblrec= np.sum(sblrec['Amount'].astype(float))
+    return sblrec
+
+def mbtransfercred(x):
+    mbtransfercred= mbdf[mbdf['WEB XFER FR DDA 001370049247']==1]
+    mbtransfercred= mbtransfercred[mbtransfercred['Rec Date'] == x]
+    mbtransfercred= np.sum(mbtransfercred['Amount'].astype(float))
+    return mbtransfercred
+
+
+ledgdatelist = sorted(list(set((mbdf['Rec Date']))))
+cred = []
+for i in ledgdatelist:
+    cred.append(creditcalc(i))
+
+deb = []
+for i in ledgdatelist:
+    deb.append(debitcalc(i))
+
+tramf = []
+for i in ledgdatelist:
+    tramf.append(tranmf(i))
+    
+dbt = []
+for i in ledgdatelist:
+    dbt.append(dbtrustee(i))
+
+mban = []
+for i in ledgdatelist:
+    mban.append(mbanaly(i))
+
+mbtran = []
+for i in ledgdatelist:
+    mbtran.append(mbtransfer(i))
+    
+serv= []
+for i in ledgdatelist:
+    serv.append(servicing(i))
+
+writ =[]
+for i in ledgdatelist:
+    writ.append(writeoffrec(i))
+
+sblp = []
+for i in ledgdatelist:
+    sblp.append(sblpurch(i))
+    
+mbtransferc = []
+for i in ledgdatelist:
+    mbtransferc.append(mbtransfercred(i))
+
+
+debcreddf = pd.DataFrame([cred,deb,tramf,dbt,mban,mbtran,serv,writ,sblp,mbtransferc]).T
+debcreddf.columns = ['Credits', 'Debits','Transfer to MF','DB Trustee Fee','MB Analysis Charge','Transfer to other MB account','Servicing Fee','Writeoff Recovery','SBL Purchases','Transfer Credit']
+pivmbdf = pd.pivot_table(debcreddf,index = pd.DatetimeIndex(ledgdatelist).normalize(),aggfunc=np.sum)
+pivmbdf['MB Financial Rec'] = ((pivmbdf['Credits']-pivmbdf['Transfer Credit'])-(pivmbdf['Debits']-pivmbdf['Servicing Fee']))+pivmbdf['Transfer to MF']+pivmbdf['MB Analysis Charge']+pivmbdf['DB Trustee Fee']+pivmbdf['Transfer to other MB account']-pivmbdf['Writeoff Recovery']-pivmbdf['SBL Purchases']
+
+
+##final join
+
+ReconciliationTable = finalrecdf.merge(pivmbdf,how ='left',left_index=True,right_index=True)
+ReconciliationTable['Difference'] = ReconciliationTable['Ondeck Rec'] - ReconciliationTable['MB Financial Rec']
+
+##ctrl+4 and ctrl+5
+
+##formatting
+
+formatteddtdf = dfdt.loc[:,'KEY':'Product Type']
+formatteddtdf['Clear Bank Date'] = list(pd.DatetimeIndex(formatteddtdf['Clear Bank Date']).normalize())
+formatteddtdf['Sent Bank Date'] = list(pd.DatetimeIndex(formatteddtdf['Sent Bank Date']).normalize())
+
+formattedmbdf = mbdf.loc[:,'Analysis Charge':'Reference Text']
+
+idnumbstemp =[]
+for i in formattedmbdf['Reference Text']:
+    idnumbstemp.append(re.findall('\d+',i))
+
+idnumbdf = pd.DataFrame(idnumbstemp)
+
+trial = list(set(formatteddtdf['Transaction ID'].astype(str)))
+
+trialli = []
+for i in range(len(idnumbstemp)):
+    trialli.append(set(idnumbstemp[i]).intersection(trial))
+    
+forrr = []
+for i in trialli:
+    forrr.append(list(i))
+
+for i in forrr:
+    if len(i)<1:
+        i.append(0)
+
+
+for2 = []
+for i in range(len(forrr)):
+    for2.append(forrr[i][0])
+
+
+
+transmbdf = formattedmbdf
+transmbdf['Transaction ID']= for2
+transmbdf['Transaction ID']= transmbdf['Transaction ID'].astype(int)
+transdtdf = formatteddtdf
+
+mbidentifiersheet = pd.merge(transmbdf,transdtdf,on ='Transaction ID',how='left')
+dtidentifiersheet = pd.merge(transdtdf,transmbdf,on ='Transaction ID',how='left')
+
+
+### month to date rec
+
+start = raw_input('What start date would you like? (Format: yyyy-mm-dd): ')
+end = raw_input('What end date would you like? (Format: yyyy-mm-dd): ')
+mtdr = ReconciliationTable.ix[start:end]
+mtdr = mtdr[['Ondeck Rec','MB Financial Rec']]
+mtdr = mtdr.sum(axis=0)
+mtdr = pd.DataFrame(mtdr).T
+mtdr['MTD Rec'] = mtdr['Ondeck Rec'] - mtdr['MB Financial Rec']
+
+dtidentifiersheet = dtidentifiersheet.drop_duplicates('Transaction ID')
+
+excelwriter = pd.ExcelWriter('Reconciliation File - '+dt.datetime.today().strftime('%m-%d-%Y')+'.xlsx')
+mtdr.to_excel(excelwriter,'MTD Rec',index=False)
+ReconciliationTable.to_excel(excelwriter,'Ondeck v MB Rec')
+mbidentifiersheet.to_excel(excelwriter,'Reconciliation Identifier - MB',index=False)
+dtidentifiersheet.to_excel(excelwriter,'Reconciliation Identifier - DT',index=False)
+
+excelwriter.save()
+excelwriter.close()
+
+
+
+
